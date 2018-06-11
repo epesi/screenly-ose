@@ -44,6 +44,8 @@ INTRO = '/screenly/intro-template.html'
 
 current_browser_url = None
 browser = None
+current_browser2_url = None
+browser2 = None
 
 VIDEO_TIMEOUT = 20  # secs
 
@@ -252,6 +254,40 @@ def browser_send(command, cb=lambda _: True):
         logging.info('browser found dead, restarting')
         load_browser()
 
+def load_browser2():
+    global browser2, current_browser2_url
+    logging.info('Loading browser2...')
+
+    if browser2:
+        logging.info('killing previous uzbl %s', browser2.pid)
+        browser2.process.kill()
+
+    current_browser2_url = 'https://delta.ujambo.nl/queueing/sidebar'
+
+    # --config=-       read commands (and config) from stdin
+    # --print-events   print events to stdout
+    browser2 = sh.Command('uzbl-browser')(print_events=True, config='-', uri=current_browser2_url, _bg=True)
+    logging.info('Browser2 loading %s. Running as PID %s.', current_browser2_url, browser2.pid)
+
+    uzbl_rc = 'set ssl_verify = {}\n'.format('1' if settings['verify_ssl'] else '0')
+    with open(HOME + UZBLRC) as f:  # load uzbl.rc
+        uzbl_rc = f.read() + uzbl_rc
+    browser2_send(uzbl_rc)
+
+
+def browser2_send(command, cb=lambda _: True):
+    if not (browser2 is None) and browser2.process.alive:
+        while not browser2.process._pipe_queue.empty():  # flush stdout
+            browser2.next()
+
+        browser2.process.stdin.put(command + '\n')
+        while True:  # loop until cb returns True
+            if cb(browser2.next()):
+                break
+    else:
+        logging.info('browser2 found dead, restarting')
+        load_browser2()
+
 
 def browser_clear(force=False):
     """Load a black page. Default cb waits for the page to load."""
@@ -284,7 +320,7 @@ def view_video(uri, duration):
 
     if arch in ('armv6l', 'armv7l'):
         player_args = ['omxplayer', uri]
-        player_kwargs = {'o': settings['audio_output'], '_bg': True, '_ok_code': [0, 124, 143]}
+        player_kwargs = {'o': settings['audio_output'], '_bg': True, '_ok_code': [0, 124, 143], 'win': '500 0 1920 1080'}
     else:
         player_args = ['mplayer', uri, '-nosound']
         player_kwargs = {'_bg': True, '_ok_code': [0, 124]}
@@ -446,6 +482,8 @@ def main():
     subscriber = ZmqSubscriber()
     subscriber.daemon = True
     subscriber.start()
+
+    load_browser2()
 
     logging.debug('Entering infinite loop.')
     while True:
